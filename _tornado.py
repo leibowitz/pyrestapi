@@ -128,15 +128,38 @@ class DBRequestHandler(tornado.web.RequestHandler):
 
         if len(join_fields) != 0:
             print join_fields
+            q = q.map(
+                        rethinkdb.row.merge(lambda doc: {
+                            table: doc
+                        })
+                        .pluck(table)
+                    )
+            
             for fields in join_fields:
                 if len(fields) != 2:
                     return None
 
                 left, right = fields
 
-                q = q.eq_join(left['field'], rethinkdb.table(right['table']), index=right['field'])\
-                    .without({'right': right['field']}).zip()
-                    
+                q = q.eq_join(
+                        rethinkdb.row[left['table']][left['field']], 
+                        rethinkdb.table(right['table']), 
+                        index=right['field'])\
+                    .map(
+                        rethinkdb.row.merge(lambda doc: doc["left"])
+                        .without("left")
+                    )\
+                    .map(
+                        rethinkdb.row.merge(lambda doc: {
+                            right['table']: doc["right"]
+                        })
+                        .without("right")
+                    )
+
+            q = q.map(
+                rethinkdb.row.merge(lambda doc: doc[table])
+                .without(table)
+            )
 
         cur = q.run(self.dbconn)
         if type(cur) == list:
