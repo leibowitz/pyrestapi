@@ -16,6 +16,15 @@ class ObjectURLRequestHandler():
     def resource_list_url(self, name):
         return "/{}".format(name)
 
+class UtilsRequestHandler(tornado.web.RequestHandler):
+    def get_int_argument(self, name, default=[], strip=True):
+        v = self.get_argument(name, default, strip)
+        try:
+            v = int(v)
+        except ValueError:
+            return None
+        return v
+
 class JSONRequestHandler(tornado.web.RequestHandler):
     def write_error(self, status_code, **kwargs):
         if self.settings.get("serve_traceback") and "exc_info" in kwargs:
@@ -56,21 +65,30 @@ class DBRequestHandler(tornado.web.RequestHandler):
         self.dbconn = dbconn
         self.dbname = dbname
 
-    def retrieve_one_document_by_pk(self, table, pk):
-        return rethinkdb\
+    def large_int(self, value):
+        if value > 2147483647:
+            return True
+        return False
+
+    def retrieve_one_document_by_pk(self, table, pk, fields = []):
+        q = rethinkdb\
                 .db(self.dbname)\
                 .table(table)\
-                .get(pk)\
-                .run(self.dbconn)
+                .get(pk)
+
+        if len(fields) != 0:
+            q = q.pluck(fields)
+
+        return q.run(self.dbconn)
 
     def retrieve_one_document_by_field(self, table, field, value):
-        return rethinkdb\
+        q = rethinkdb\
             .db(self.dbname)\
             .table(table)\
             .filter({field: value})\
             .limit(1)\
-            .nth(0)\
-            .run(self.dbconn)
+            .nth(0)
+        return q.run(self.dbconn)
     
     def retrieve_all_documents(self, table, limit = 0, offset = 0, fields = []):
         q = rethinkdb\
@@ -81,9 +99,13 @@ class DBRequestHandler(tornado.web.RequestHandler):
             q = q.pluck(fields)
 
         if offset != 0:
+            if self.large_int(offset):
+                return None
             q = q.skip(offset)
 
         if limit != 0:
+            if self.large_int(limit):
+                return None
             q = q.limit(limit)
 
         cur = q.run(self.dbconn)
@@ -159,12 +181,13 @@ class DBRequestHandler(tornado.web.RequestHandler):
             .count()\
             .run(self.dbconn)
 
-class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, DBRequestHandler):
+class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, DBRequestHandler, UtilsRequestHandler):
     pass
 
 class ObjectHandler(JSONORMRestAPIRequestHandler):
     def get(self, name, pk):
-        document = self.retrieve_one_document_by_pk(name, pk)
+        fields = self.get_arguments('field', [])
+        document = self.retrieve_one_document_by_pk(name, pk, fields)
         if document is None:
             self.send_error(404)
             return
@@ -206,10 +229,20 @@ class ObjectHandler(JSONORMRestAPIRequestHandler):
 
 class ListHandler(JSONORMRestAPIRequestHandler):
     def get(self, name):
-        limit = self.get_argument('limit', 50)
-        offset = self.get_argument('offset', 0)
+        limit = self.get_int_argument('limit', 50)
+        if limit is None or limit <= 0:
+            self.send_error(400)
+            return
+        offset = self.get_int_argument('offset', 0)
+        if offset is None or offset < 0:
+            self.send_error(400)
+            return
+            
         fields = self.get_arguments('field', [])
         documents = self.retrieve_all_documents(name, limit, offset, fields)
+        if documents is None:
+            self.send_error(400)
+            return
         self.write(json.dumps(documents))
 
     def head(self, name):
