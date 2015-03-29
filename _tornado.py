@@ -8,11 +8,14 @@ import tornado.options
 import rethinkdb
 from dougrain import Builder
 
-class RequestHandler(tornado.web.RequestHandler):
-    def initialize(self, dbconn, dbname):
-        self.dbconn = dbconn
-        self.dbname = dbname
+class ObjectURLRequestHandler():
+    def resource_object_url(self, name, pk):
+        return "/{}/{}".format(name, pk)
+    
+    def resource_list_url(self, name):
+        return "/{}".format(name)
 
+class JSONRequestHandler(tornado.web.RequestHandler):
     def prepare(self):
         '''Incorporate request JSON into arguments dictionary.'''
         #if self.request.headers["Content-Type"].startswith("application/json"):
@@ -35,6 +38,10 @@ class RequestHandler(tornado.web.RequestHandler):
                 message = 'Unable to parse JSON.'
                 self.send_error(400, message=message) # Bad Request
 
+class DBRequestHandler(tornado.web.RequestHandler):
+    def initialize(self, dbconn, dbname):
+        self.dbconn = dbconn
+        self.dbname = dbname
 
     def retrieve_one_document_by_pk(self, table, pk):
         return rethinkdb\
@@ -63,41 +70,71 @@ class RequestHandler(tornado.web.RequestHandler):
         return list(cur)
 
     def insert_document(self, table, document):
-        return rethinkdb\
+        res = rethinkdb\
             .db(self.dbname)\
             .table(table)\
             .insert(document)\
             .run(self.dbconn)
 
+        if res['inserted'] != 0 and len(res['generated_keys']) != 0:
+            document['id'] = res['generated_keys'][0]
+            return document
+
+        return None
+
     def update_document_by_pk(self, table, pk, document):
         if 'id' not in document:
             document['id'] = pk
-        return rethinkdb\
+
+        res = rethinkdb\
             .db(self.dbname)\
             .table(table)\
             .get(pk)\
             .update(document)\
             .run(self.dbconn)
 
+        if res['replaced'] != 0:
+            return True
+        if res['unchanged'] != 0:
+            return False
+
+        return None
+
     def replace_document_by_pk(self, table, pk, document):
         if 'id' not in document:
             document['id'] = pk
-        return rethinkdb\
+
+        res = rethinkdb\
             .db(self.dbname)\
             .table(table)\
             .get(pk)\
             .replace(document)\
             .run(self.dbconn)
 
+        if res['replaced'] != 0:
+            return True
+        if res['unchanged'] != 0:
+            return False
+
+        return None
+
     def delete_document_by_pk(self, table, pk):
-        return rethinkdb\
+        res = rethinkdb\
             .db(self.dbname)\
             .table(table)\
             .get(pk)\
             .delete()\
             .run(self.dbconn)
+
+        if res['deleted'] != 0:
+            return True
+
+        return False
        
-class ObjectHandler(RequestHandler):
+class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, DBRequestHandler):
+    pass
+
+class ObjectHandler(JSONORMRestAPIRequestHandler):
     def get(self, name, pk):
         document = self.retrieve_one_document_by_pk(name, pk)
         if document is None:
@@ -107,32 +144,52 @@ class ObjectHandler(RequestHandler):
     
     def post(self, name, pk):
         document = self.request.json_data
-        self.update_document_by_pk(name, pk, document)
+        op = self.update_document_by_pk(name, pk, document)
+        if op is None:
+            self.send_error(404)
+            return
         self.write(document)
 
     def patch(self, name, pk):
         document = self.request.json_data
-        self.update_document_by_pk(name, pk, document)
+        op = self.update_document_by_pk(name, pk, document)
+        if op is None:
+            self.send_error(404)
+            return
+            
         self.write(document)
 
     def put(self, name, pk):
         document = self.request.json_data
-        self.replace_document_by_pk(name, pk, document)
+        op = self.replace_document_by_pk(name, pk, document)
+        if op is None:
+            self.send_error(404)
+            return
+            
         self.write(document)
 
     def delete(self, name, pk):
-        self.delete_document_by_pk(name, pk)
-        self.write({'id': pk})
+        if not self.delete_document_by_pk(name, pk):
+            self.send_error(404)
+            return
 
-class ListHandler(RequestHandler):
+        self.set_status(410)
+        self.finish()
+
+class ListHandler(JSONORMRestAPIRequestHandler):
     def get(self, name):
         documents = self.retrieve_all_documents(name)
         self.write(json.dumps(documents))
 
     def post(self, name):
         document = self.request.json_data
-        self.insert_document(name, document)
-        self.write(document)
+        res = self.insert_document(name, document)
+        if res is None:
+            self.send_error(400)
+            return
+        self.set_status(201)
+        self.set_header("Location", self.resource_object_url(name, res['id']))
+        self.write(res)
  
 if __name__ == "__main__":
     tornado.options.parse_command_line()
