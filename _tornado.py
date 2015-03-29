@@ -70,14 +70,17 @@ class DBRequestHandler(tornado.web.RequestHandler):
             return True
         return False
 
-    def retrieve_one_document_by_pk(self, table, pk, fields = []):
+    def retrieve_one_document_by_pk(self, table, pk, with_fields = [], without_fields = []):
         q = rethinkdb\
                 .db(self.dbname)\
                 .table(table)\
                 .get(pk)
 
-        if len(fields) != 0:
-            q = q.pluck(fields)
+        if len(with_fields) != 0:
+            q = q.pluck(with_fields)
+        
+        if len(without_fields) != 0:
+            q = q.without(without_fields)
 
         return q.run(self.dbconn)
 
@@ -90,13 +93,16 @@ class DBRequestHandler(tornado.web.RequestHandler):
             .nth(0)
         return q.run(self.dbconn)
     
-    def retrieve_all_documents(self, table, limit = 0, offset = 0, fields = []):
+    def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = []):
         q = rethinkdb\
             .db(self.dbname)\
             .table(table)
 
-        if len(fields) != 0:
-            q = q.pluck(fields)
+        if len(with_fields) != 0:
+            q = q.pluck(with_fields)
+        
+        if len(without_fields) != 0:
+            q = q.without(without_fields)
 
         if offset != 0:
             if self.large_int(offset):
@@ -182,12 +188,22 @@ class DBRequestHandler(tornado.web.RequestHandler):
             .run(self.dbconn)
 
 class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, DBRequestHandler, UtilsRequestHandler):
-    pass
+
+    def parse_fields_filter(self, fields):
+        with_fields = []
+        without_fields = []
+        for name in fields:
+            if name[0] == "-":
+                without_fields.append(name[1:])
+            else:
+                with_fields.append(name)
+        return with_fields, without_fields
 
 class ObjectHandler(JSONORMRestAPIRequestHandler):
     def get(self, name, pk):
         fields = self.get_arguments('field', [])
-        document = self.retrieve_one_document_by_pk(name, pk, fields)
+        with_fields, without_fields = self.parse_fields_filter(fields)
+        document = self.retrieve_one_document_by_pk(name, pk, with_fields, without_fields)
         if document is None:
             self.send_error(404)
             return
@@ -239,7 +255,9 @@ class ListHandler(JSONORMRestAPIRequestHandler):
             return
             
         fields = self.get_arguments('field', [])
-        documents = self.retrieve_all_documents(name, limit, offset, fields)
+        with_fields, without_fields = self.parse_fields_filter(fields)
+
+        documents = self.retrieve_all_documents(name, limit, offset, with_fields, without_fields)
         if documents is None:
             self.send_error(400)
             return
