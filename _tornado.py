@@ -314,8 +314,8 @@ if __name__ == "__main__":
         dbname="test",
     )
     application = tornado.web.Application([
-        (r"/([^/]+)/([^/]+)", ObjectHandler, params),
-        (r"/([^/]+)", ListHandler, params),
+        (r"/(?P<name>[^/]+)/(?P<pk>[^/]+)", ObjectHandler, params),
+        (r"/(?P<name>[^/]+)", ListHandler, params),
     ], **settings)
  
     http_server = tornado.httpserver.HTTPServer(application, ssl_options=ssl_options)
