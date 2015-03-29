@@ -144,6 +144,13 @@ class DBRequestHandler(tornado.web.RequestHandler):
 
         return False
        
+    def count_documents(self, table):
+        return rethinkdb\
+            .db(self.dbname)\
+            .table(table)\
+            .count()\
+            .run(self.dbconn)
+
 class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, DBRequestHandler):
     pass
 
@@ -193,6 +200,11 @@ class ListHandler(JSONORMRestAPIRequestHandler):
     def get(self, name):
         documents = self.retrieve_all_documents(name)
         self.write(json.dumps(documents))
+
+    def head(self, name):
+        nr = self.count_documents(name)
+        self.set_header("X-Result-Count", nr)
+        self.finish()
 
     def post(self, name):
         document = self.request.json_data
