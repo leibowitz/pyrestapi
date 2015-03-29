@@ -215,6 +215,9 @@ class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, 
                 with_fields.append(name)
         return with_fields, without_fields
 
+class ErrorHandler(tornado.web.ErrorHandler, JSONRequestHandler):
+    pass
+
 class ObjectHandler(JSONORMRestAPIRequestHandler):
     def get(self, name, pk):
         fields = self.get_arguments('field', [])
@@ -306,6 +309,8 @@ if __name__ == "__main__":
     }
     settings = dict(
         debug = True,
+        default_handler_class = ErrorHandler,
+        default_handler_args = dict(status_code=404),
     )
 
     conn = rethinkdb.connect('localhost', 28015)
