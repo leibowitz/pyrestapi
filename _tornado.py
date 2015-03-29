@@ -101,7 +101,7 @@ class DBRequestHandler(tornado.web.RequestHandler):
                 sort_fields[k] = name[1:]
         return sort_fields
     
-    def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = [], sort_fields = []):
+    def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = [], sort_fields = [], join_fields = []):
         q = rethinkdb\
             .db(self.dbname)\
             .table(table)
@@ -125,6 +125,18 @@ class DBRequestHandler(tornado.web.RequestHandler):
             if self.large_int(limit):
                 return None
             q = q.limit(limit)
+
+        if len(join_fields) != 0:
+            print join_fields
+            for fields in join_fields:
+                if len(fields) != 2:
+                    return None
+
+                left, right = fields
+
+                q = q.eq_join(left['field'], rethinkdb.table(right['table']), index=right['field'])\
+                    .without({'right': right['field']}).zip()
+                    
 
         cur = q.run(self.dbconn)
         if type(cur) == list:
@@ -215,13 +227,52 @@ class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, 
                 with_fields.append(name)
         return with_fields, without_fields
 
+    def parse_table_field(self, field, table=None):
+        if '.' in field:
+            args = field.split('.')
+            if len(args) == 2:
+                table, field = args 
+            elif len(args) == 1:
+                field = args
+            else:
+                field = None
+                
+        return table, field
+
+    def parse_join_fields(self, name, exclude = []):
+        join_fields = []
+
+        args = self.request.query_arguments.copy()
+
+        for name in exclude:
+            if name in args:
+                del args[name]
+
+        for k, values in args.iteritems():
+            table, field = self.parse_table_field(k, name)
+            if field is None:
+                return None
+            mapping = [{'table': table, 'field': field}]
+            for v in values:
+                table, field = self.parse_table_field(v, name)
+                if field is None:
+                    return None
+
+                cond = mapping[:]
+                cond.append({'table': table, 'field': field})
+
+                join_fields.append(cond)
+        return join_fields
+
 class ErrorHandler(tornado.web.ErrorHandler, JSONRequestHandler):
     pass
 
 class ObjectHandler(JSONORMRestAPIRequestHandler):
+
     def get(self, name, pk):
         fields = self.get_arguments('field', [])
         with_fields, without_fields = self.parse_fields_filter(fields)
+
         document = self.retrieve_one_document_by_pk(name, pk, with_fields, without_fields)
         if document is None:
             self.send_error(404)
@@ -278,7 +329,12 @@ class ListHandler(JSONORMRestAPIRequestHandler):
         
         sort_fields = self.get_arguments('sort', [])
 
-        documents = self.retrieve_all_documents(name, limit, offset, with_fields, without_fields, sort_fields)
+        join_fields = self.parse_join_fields(name, ['field', 'offset', 'limit', 'sort'])
+        if join_fields is None:
+            self.send_error(400)
+            return
+
+        documents = self.retrieve_all_documents(name, limit, offset, with_fields, without_fields, sort_fields, join_fields)
         if documents is None:
             self.send_error(400)
             return
