@@ -72,13 +72,21 @@ class DBRequestHandler(tornado.web.RequestHandler):
             .nth(0)\
             .run(self.dbconn)
     
-    def retrieve_all_documents(self, table, limit = 50, offset = 0):
-        cur = rethinkdb\
+    def retrieve_all_documents(self, table, limit = 0, offset = 0, fields = []):
+        q = rethinkdb\
             .db(self.dbname)\
-            .table(table)\
-            .skip(offset)\
-            .limit(limit)\
-            .run(self.dbconn)
+            .table(table)
+
+        if len(fields) != 0:
+            q = q.pluck(fields)
+
+        if offset != 0:
+            q = q.skip(offset)
+
+        if limit != 0:
+            q = q.limit(limit)
+
+        cur = q.run(self.dbconn)
         cur.close()
         return list(cur)
 
@@ -198,7 +206,10 @@ class ObjectHandler(JSONORMRestAPIRequestHandler):
 
 class ListHandler(JSONORMRestAPIRequestHandler):
     def get(self, name):
-        documents = self.retrieve_all_documents(name)
+        limit = self.get_argument('limit', 50)
+        offset = self.get_argument('offset', 0)
+        fields = self.get_arguments('field', [])
+        documents = self.retrieve_all_documents(name, limit, offset, fields)
         self.write(json.dumps(documents))
 
     def head(self, name):
