@@ -97,6 +97,8 @@ class DBRequestHandler(tornado.web.RequestHandler):
         for k, name in enumerate(sort_fields):
             if name[0] == "-":
                 sort_fields[k] = rethinkdb.desc(name[1:])
+            if name[1] == "+":
+                sort_fields[k] = name[1:]
         return sort_fields
     
     def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = [], sort_fields = []):
@@ -207,6 +209,8 @@ class JSONORMRestAPIRequestHandler(JSONRequestHandler, ObjectURLRequestHandler, 
         for name in fields:
             if name[0] == "-":
                 without_fields.append(name[1:])
+            elif name[0] == "+":
+                with_fields.append(name[1:])
             else:
                 with_fields.append(name)
         return with_fields, without_fields
