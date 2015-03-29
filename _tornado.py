@@ -92,8 +92,14 @@ class DBRequestHandler(tornado.web.RequestHandler):
             .limit(1)\
             .nth(0)
         return q.run(self.dbconn)
+
+    def sort_fields(self, sort_fields=[]):
+        for k, name in enumerate(sort_fields):
+            if name[0] == "-":
+                sort_fields[k] = rethinkdb.desc(name[1:])
+        return sort_fields
     
-    def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = []):
+    def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = [], sort_fields = []):
         q = rethinkdb\
             .db(self.dbname)\
             .table(table)
@@ -103,6 +109,10 @@ class DBRequestHandler(tornado.web.RequestHandler):
         
         if len(without_fields) != 0:
             q = q.without(without_fields)
+
+        if len(sort_fields) != 0:
+            sort_fields = self.sort_fields(sort_fields)
+            q = q.order_by(*sort_fields)
 
         if offset != 0:
             if self.large_int(offset):
@@ -115,6 +125,8 @@ class DBRequestHandler(tornado.web.RequestHandler):
             q = q.limit(limit)
 
         cur = q.run(self.dbconn)
+        if type(cur) == list:
+            return cur
         cur.close()
         return list(cur)
 
@@ -256,8 +268,10 @@ class ListHandler(JSONORMRestAPIRequestHandler):
             
         fields = self.get_arguments('field', [])
         with_fields, without_fields = self.parse_fields_filter(fields)
+        
+        sort_fields = self.get_arguments('sort', [])
 
-        documents = self.retrieve_all_documents(name, limit, offset, with_fields, without_fields)
+        documents = self.retrieve_all_documents(name, limit, offset, with_fields, without_fields, sort_fields)
         if documents is None:
             self.send_error(400)
             return
