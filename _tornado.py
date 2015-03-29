@@ -1,5 +1,6 @@
 import os.path
 import json
+import traceback
 import tornado.ioloop
 import tornado.web
 import tornado.httpserver
@@ -16,6 +17,19 @@ class ObjectURLRequestHandler():
         return "/{}".format(name)
 
 class JSONRequestHandler(tornado.web.RequestHandler):
+    def write_error(self, status_code, **kwargs):
+        if self.settings.get("serve_traceback") and "exc_info" in kwargs:
+            # in debug mode, try to send a traceback
+            self.set_header('Content-Type', 'application/json')
+            for line in traceback.format_exception(*kwargs["exc_info"]):
+                self.write({"error": line})
+            self.finish()
+        else:
+            self.finish({
+                            "code": status_code,
+                            "message": self._reason,
+                        })
+
     def prepare(self):
         '''Incorporate request JSON into arguments dictionary.'''
         #if self.request.headers["Content-Type"].startswith("application/json"):
@@ -34,7 +48,6 @@ class JSONRequestHandler(tornado.web.RequestHandler):
                 self.request.arguments.pop(self.request.body)
                 self.request.arguments.update(json_data)
             except ValueError, e:
-                logger.debug(e.message)
                 message = 'Unable to parse JSON.'
                 self.send_error(400, message=message) # Bad Request
 
