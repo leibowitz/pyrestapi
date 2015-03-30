@@ -1,5 +1,6 @@
 import os.path
 import json
+import itertools
 import traceback
 import tornado.ioloop
 import tornado.web
@@ -100,6 +101,48 @@ class DBRequestHandler(tornado.web.RequestHandler):
             if name[1] == "+":
                 sort_fields[k] = name[1:]
         return sort_fields
+
+    def ordered_deps(self, join_fields = [], table = None):
+
+        if table is not None:
+            # get the list of table names we want to query
+            #tables = [x[0]['table'] for x in join_fields if len(x) != 0 and 'table' in x[0]]
+            tables = [(x['table'], y['table']) for (x, y) in join_fields]
+            tables = set(itertools.chain.from_iterable(tables))
+
+            if table not in tables:
+                return None
+
+        name_to_instance = dict( (unicode(join[1]['table']), join) for join in join_fields) 
+        name_to_deps = dict( (unicode(join[1]['table']), set([unicode(join[0]['table'])])) for join in join_fields) 
+
+        ordered_fields = []
+
+        if table is not None:
+            # remove table dependencies
+            for deps in name_to_deps.itervalues():
+                if table in deps:
+                    deps.remove(table)
+            #name_to_deps[unicode(table)] = set()
+
+        while name_to_deps: 
+            # get all tables where all dependencies have been solved
+            ready = {name for name, deps in name_to_deps.iteritems() if not deps}
+
+            # If there aren't any, we have a problem
+            if not ready:
+                return None
+
+            for name in ready:
+                # remove them from dependencies
+                del name_to_deps[name]
+
+            for deps in name_to_deps.itervalues():
+                deps.difference_update(ready)
+
+            ordered_fields.extend([name_to_instance[name] for name in ready])
+        
+        return ordered_fields
     
     def retrieve_all_documents(self, table, limit = 0, offset = 0, with_fields = [], without_fields = [], sort_fields = [], join_fields = []):
         q = rethinkdb\
